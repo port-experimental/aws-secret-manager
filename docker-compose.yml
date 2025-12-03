@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  aws-secrets-ssa:
+    build: .
+    container_name: aws-secrets-ssa
+    ports:
+      - "${WEBHOOK_PORT:-3000}:3000"
+    environment:
+      # Port Configuration
+      - PORT_CLIENT_ID=${PORT_CLIENT_ID}
+      - PORT_CLIENT_SECRET=${PORT_CLIENT_SECRET}
+      # AWS Configuration
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      # Webhook Server
+      - WEBHOOK_PORT=${WEBHOOK_PORT:-3000}
+      - WEBHOOK_PATH=${WEBHOOK_PATH:-/webhook}
+      # Entity Creation
+      - PORT_CREATE_ENTITY=${PORT_CREATE_ENTITY:-false}
+      - PORT_BLUEPRINT_ID=${PORT_BLUEPRINT_ID}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+

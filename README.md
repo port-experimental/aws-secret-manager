@@ -185,19 +185,70 @@ yarn start
 
 ### Option 2: Docker
 
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json yarn.lock ./
-RUN yarn install --production
-COPY . .
-EXPOSE 3000
-CMD ["yarn", "start"]
+#### Using Docker Compose (Recommended)
+
+1. Create a `.env` file with your credentials (see [Configure Environment](#2-configure-environment))
+2. Run the service:
+
+```bash
+docker-compose up -d
 ```
+
+The service will be available on port 3000 (or whatever `WEBHOOK_PORT` is set to).
+
+#### Using Docker directly
+
+```bash
+# Build the image
+docker build -t aws-secrets-ssa .
+
+# Run the container
+docker run -d \
+  --name aws-secrets-ssa \
+  -p 3000:3000 \
+  --env-file .env \
+  aws-secrets-ssa
+```
+
+**Note**: Make sure your `.env` file contains all required environment variables (see [Configure Environment](#2-configure-environment)).
 
 ### Option 3: Serverless (AWS Lambda)
 
 The webhook server can be easily adapted for Lambda. The webhook endpoint can be wrapped in a Lambda handler.
+
+### Option 4: Docker (Production)
+
+For production deployments, you can use Docker with the provided `Dockerfile` and `docker-compose.yml`.
+
+**Features:**
+- Non-root user for security
+- Health checks included
+- Log volume mounting
+- Automatic restart on failure
+- Environment variable management
+
+**Build and deploy:**
+```bash
+# Build the image
+docker build -t aws-secrets-ssa .
+
+# Or use docker-compose
+docker-compose up -d --build
+```
+
+**View logs:**
+```bash
+docker-compose logs -f
+# or
+docker logs -f aws-secrets-ssa
+```
+
+**Stop the service:**
+```bash
+docker-compose down
+# or
+docker stop aws-secrets-ssa
+```
 
 ## Port Entity Creation
 
