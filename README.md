@@ -21,6 +21,7 @@ A standalone Port self-service action that creates and updates AWS Secrets Manag
 - AWS IAM role or credential-based authentication
 - Support for temporary credentials (with session tokens)
 - Flexible property naming (secretName/secret_name/secret_key)
+- Automatic decryption of Port encrypted inputs (AES-256-GCM)
 - Comprehensive error handling with helpful messages
 - Startup validation for configuration
 
@@ -115,7 +116,7 @@ In Port, create a self-service action with:
     "secretValue": {
       "type": "string",
       "title": "Secret Value",
-      "description": "Secret value (can be JSON string for complex secrets). Also accepts 'secret_value' as property name."
+      "description": "Secret value (can be JSON string for complex secrets). Also accepts 'secret_value' as property name. If encrypted with 'aes256-gcm' in Port, it will be automatically decrypted before storing in AWS."
     },
     "operation": {
       "type": "string",
@@ -395,12 +396,28 @@ Logs are written to:
 
 Set log level via `LOG_LEVEL` environment variable (error, warn, info, http, debug).
 
+## Encrypted Inputs
+
+The service automatically handles encrypted inputs from Port. When you configure a property with `"encryption": "aes256-gcm"` in your Port action, Port will encrypt the value before sending it to the webhook.
+
+**Automatic Decryption:**
+- The service detects encrypted values (base64-encoded AES-256-GCM)
+- Uses `PORT_CLIENT_SECRET` to decrypt the value
+- Stores the **decrypted** value in AWS Secrets Manager (not the encrypted one)
+
+**Requirements:**
+- `PORT_CLIENT_SECRET` must be set in your environment
+- The client secret must be at least 32 characters (uses first 32 bytes as decryption key)
+
+**Note:** If decryption fails, the action will fail with a clear error message. This ensures encrypted values are never stored in AWS without being decrypted first.
+
 ## Error Handling
 
 The service provides comprehensive error handling:
 
 - **Configuration Validation**: On startup, the server validates required environment variables and provides helpful warnings/errors
 - **AWS Credential Errors**: Clear error messages when credentials are invalid, expired, or missing
+- **Encryption/Decryption Errors**: Clear errors if encrypted values cannot be decrypted
 - **Synchronized Actions**: Errors are properly reported to Port for synchronized actions
 - **Helpful Messages**: Error messages include suggestions for fixing common issues (e.g., missing session tokens for temporary credentials)
 

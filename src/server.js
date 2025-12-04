@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const AWSSecretsService = require('./aws-secrets-service');
 const PortClient = require('./port-client');
 const logger = require('./logger');
@@ -173,6 +174,94 @@ async function processActionSynchronously(runId, action, properties, entity) {
 }
 
 /**
+ * Decrypt Port encrypted secret value
+ * Port encrypts secrets using AES-256-GCM with the first 32 bytes of PORT_CLIENT_SECRET as the key
+ * Format: base64(IV (16 bytes) + ciphertext + MAC (16 bytes))
+ */
+function decryptPortSecret(encryptedValue, clientSecret) {
+  if (!encryptedValue || !clientSecret) {
+    throw new Error('Both encrypted value and client secret are required for decryption');
+  }
+
+  try {
+    // Decode the base64-encoded encrypted value
+    const encryptedBuffer = Buffer.from(encryptedValue, 'base64');
+
+    // Check minimum length (16 IV + at least 1 byte ciphertext + 16 MAC = 33 bytes minimum)
+    if (encryptedBuffer.length < 33) {
+      throw new Error('Encrypted value is too short to be valid');
+    }
+
+    // Extract components: IV (first 16 bytes), MAC (last 16 bytes), ciphertext (middle)
+    const iv = encryptedBuffer.slice(0, 16);
+    const mac = encryptedBuffer.slice(-16);
+    const ciphertext = encryptedBuffer.slice(16, -16);
+
+    // Derive the decryption key from the first 32 bytes of the Client Secret
+    // AES-256 requires exactly 32 bytes
+    let key;
+    if (clientSecret.length >= 32) {
+      key = Buffer.from(clientSecret.slice(0, 32), 'utf8');
+    } else {
+      // If client secret is shorter than 32 bytes, pad with zeros (shouldn't happen in practice)
+      key = Buffer.alloc(32);
+      Buffer.from(clientSecret, 'utf8').copy(key);
+    }
+
+    // Create the decipher
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(mac);
+
+    // Decrypt the ciphertext
+    let decrypted = decipher.update(ciphertext);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+
+    // Convert the decrypted buffer to a string
+    return decrypted.toString('utf8');
+  } catch (error) {
+    // If decryption fails, log the error and re-throw
+    // We don't want to store encrypted values in AWS Secrets Manager
+    logger.error(`Decryption failed: ${error.message}`);
+    throw new Error(`Failed to decrypt Port encrypted secret. Make sure PORT_CLIENT_SECRET is correct. Error: ${error.message}`);
+  }
+}
+
+/**
+ * Check if a value appears to be a Port encrypted value
+ * Port encrypted values are base64 strings that are typically longer and don't start with common patterns
+ */
+function isPortEncrypted(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  
+  // Check if it's a valid base64 string
+  const base64Regex = /^[A-Za-z0-9+/]+=*$/;
+  if (!base64Regex.test(value)) {
+    return false;
+  }
+
+  // Port encrypted values are typically longer (at least 33 bytes when decoded = ~44 base64 chars)
+  // and don't start with common JSON/plaintext patterns
+  if (value.length < 44) {
+    return false;
+  }
+
+  // If it starts with '{' or looks like JSON, it's probably not encrypted
+  if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
+    return false;
+  }
+
+  // Try to decode and check if it has the minimum structure (IV + ciphertext + MAC)
+  try {
+    const decoded = Buffer.from(value, 'base64');
+    return decoded.length >= 33; // Minimum: 16 IV + 1 byte + 16 MAC
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Validate required configuration before processing
  */
 function validateConfiguration(properties) {
@@ -227,9 +316,28 @@ async function handleAWSSecrets(runId, action, properties, entity) {
     throw new Error('secretName is required (expected secretName, secret_name, or secret_key)');
   }
 
-  const secretValue = properties.secretValue || properties.secret_value;
+  let secretValue = properties.secretValue || properties.secret_value;
   if (!secretValue) {
     throw new Error('secretValue is required (expected secretValue or secret_value)');
+  }
+
+  // Decrypt if the value appears to be encrypted by Port
+  if (typeof secretValue === 'string' && isPortEncrypted(secretValue)) {
+    try {
+      const clientSecret = process.env.PORT_CLIENT_SECRET;
+      if (!clientSecret) {
+        throw new Error('PORT_CLIENT_SECRET is required to decrypt encrypted inputs from Port');
+      }
+      logger.info('Detected Port encrypted value, decrypting...');
+      secretValue = decryptPortSecret(secretValue, clientSecret);
+    } catch (error) {
+      logger.error(`Failed to decrypt encrypted secret value: ${error.message}`);
+      throw new Error(`Failed to decrypt encrypted secret value. ${error.message}`);
+    }
+  } else {
+    // Log non-encrypted values at debug level for debugging
+    logger.error(`Secret value (not encrypted): ${secretValue}`);
+    throw new Error(`Secret value (not encrypted): ${secretValue}`);
   }
 
   // Parse secret value if it's a JSON string
