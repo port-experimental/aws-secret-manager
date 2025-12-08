@@ -10,6 +10,40 @@ A standalone Port self-service action that creates and updates AWS Secrets Manag
 **Lower resource usage** - No Kafka consumer overhead  
 **Easier to scale** - Each request is independent  
 
+## Quickstart
+
+1. **Install dependencies**
+
+   ```bash
+   yarn install
+   ```
+
+2. **Configure environment**
+
+   ```bash
+   cp .env.example .env
+   # then edit .env with your Port and AWS credentials
+   ```
+
+3. **Run the server**
+
+   ```bash
+   yarn start
+   ```
+
+   The server listens on `WEBHOOK_PORT` (default `3000`) and exposes:
+
+   - `POST /webhook` – Port action webhook endpoint
+   - `GET /health` – liveness probe
+   - `GET /status` – basic service info
+
+4. **Configure a Port self-service action**
+
+   - Invocation type: **Webhook**  
+   - Webhook URL: `https://your-server.com/webhook` (or your ngrok URL in development)  
+   - Synchronized: `true` (recommended)  
+   - Inputs: at least `secretName`, `secretValue`, and optionally `operation` (`create`/`update`/`upsert`)
+
 ## Features
 
 - Create AWS secrets
@@ -364,6 +398,8 @@ curl http://localhost:3000/health
 curl http://localhost:3000/status
 ```
 
+These endpoints are suitable for Docker / Kubernetes liveness and readiness probes.
+
 ### Test Webhook (Manual)
 
 ```bash
@@ -395,6 +431,19 @@ Logs are written to:
 - `logs/error.log` (errors only, JSON format)
 
 Set log level via `LOG_LEVEL` environment variable (error, warn, info, http, debug).
+
+## Security
+
+- **Transport security**: Run this service behind HTTPS (load balancer, API gateway, or ingress). Do not expose it over plain HTTP on the public internet.
+- **Authentication and access control**: Protect the `/webhook` endpoint using network controls (VPC, IP allow-lists) and/or an authenticated ingress (API key, OAuth, mTLS, etc.). Port should be the only system allowed to call it.
+- **Secret handling**:
+  - Secret values are **never logged** by this service.
+  - When `secretValue` is configured with `"encryption": "aes256-gcm"` in Port, the value is transparently decrypted using `PORT_CLIENT_SECRET` and only the decrypted value is sent to AWS Secrets Manager.
+  - Plaintext `secretValue` is accepted but still not logged.
+- **AWS credentials**:
+  - Prefer **IAM roles** (EC2/ECS/Lambda/IRSA) over long-lived access keys.
+  - If you do use access keys, store them in environment variables or a secret manager, not in source control.
+  - Use least-privilege IAM policies: restrict Secrets Manager permissions to only the secrets or paths you actually manage.
 
 ## Encrypted Inputs
 

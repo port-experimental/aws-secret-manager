@@ -334,10 +334,6 @@ async function handleAWSSecrets(runId, action, properties, entity) {
       logger.error(`Failed to decrypt encrypted secret value: ${error.message}`);
       throw new Error(`Failed to decrypt encrypted secret value. ${error.message}`);
     }
-  } else {
-    // Log non-encrypted values at debug level for debugging
-    logger.error(`Secret value (not encrypted): ${secretValue}`);
-    throw new Error(`Secret value (not encrypted): ${secretValue}`);
   }
 
   // Parse secret value if it's a JSON string
