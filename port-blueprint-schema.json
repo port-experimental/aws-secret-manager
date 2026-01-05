@@ -1,0 +1,73 @@
+{
+  "identifier": "secret",
+  "title": "AWS Secret",
+  "icon": "Lock",
+  "description": "AWS Secrets Manager secrets with operation history including failures",
+  "schema": {
+    "properties": {
+      "secret_name": {
+        "type": "string",
+        "title": "Secret Name",
+        "description": "The name of the AWS secret"
+      },
+      "secret_arn": {
+        "type": "string",
+        "title": "Secret ARN",
+        "description": "The Amazon Resource Name (ARN) of the secret",
+        "format": "url"
+      },
+      "secret_version": {
+        "type": "string",
+        "title": "Secret Version",
+        "description": "The version ID of the secret"
+      },
+      "region": {
+        "type": "string",
+        "title": "AWS Region",
+        "description": "The AWS region where the secret is stored",
+        "enum": [
+          "us-east-1",
+          "us-east-2",
+          "us-west-1",
+          "us-west-2",
+          "eu-west-1",
+          "eu-west-2",
+          "eu-central-1",
+          "ap-southeast-1",
+          "ap-southeast-2",
+          "ap-northeast-1"
+        ]
+      },
+      "operation": {
+        "type": "string",
+        "title": "Operation",
+        "description": "The operation performed on this secret",
+        "enum": ["create", "update", "upsert"]
+      },
+      "last_updated": {
+        "type": "string",
+        "title": "Last Updated",
+        "description": "Timestamp of when the secret was last updated",
+        "format": "date-time"
+      },
+      "status": {
+        "type": "string",
+        "title": "Status",
+        "description": "Status of the operation",
+        "enum": ["success", "failed"],
+        "enumColors": {
+          "success": "green",
+          "failed": "red"
+        }
+      },
+      "error_message": {
+        "type": "string",
+        "title": "Error Message",
+        "description": "Error message if the operation failed"
+      }
+    },
+    "required": ["secret_name", "status"]
+  },
+  "calculationProperties": {},
+  "relations": {}
+}
