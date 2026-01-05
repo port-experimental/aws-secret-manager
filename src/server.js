@@ -3,18 +3,34 @@ const crypto = require('crypto');
 const AWSSecretsService = require('./aws-secrets-service');
 const PortClient = require('./port-client');
 const logger = require('./logger');
+const { createWebhookSecurityMiddleware } = require('./webhook-security');
 require('dotenv').config();
 
 const app = express();
 
-app.use(express.json());
+// Store raw body for signature verification before JSON parsing
+app.use(express.json({
+  verify: (req, res, buf, encoding) => {
+    // Store raw body as string for signature verification
+    req.rawBody = buf.toString('utf8');
+  }
+}));
 
 const portClient = new PortClient();
+
+// Security middleware for webhook endpoint
+const webhookSecurity = createWebhookSecurityMiddleware({
+  webhookSecret: process.env.WEBHOOK_SECRET,
+  allowedIPs: process.env.ALLOWED_IPS?.split(',').map(ip => ip.trim()),
+  maxRequestAge: parseInt(process.env.MAX_REQUEST_AGE) || 300,
+  enableRateLimit: process.env.ENABLE_RATE_LIMIT !== 'false',
+  maxRequestsPerMinute: parseInt(process.env.MAX_REQUESTS_PER_MINUTE) || 100,
+});
 
 /**
  * Main webhook endpoint - receives action invocations from Port
  */
-app.post(process.env.WEBHOOK_PATH || '/webhook', async (req, res) => {
+app.post(process.env.WEBHOOK_PATH || '/webhook', webhookSecurity, async (req, res) => {
   const startTime = Date.now();
   
   try {
@@ -98,8 +114,9 @@ app.post(process.env.WEBHOOK_PATH || '/webhook', async (req, res) => {
     } catch (error) {
       logger.error(`Error processing action ${runId}:`, error);
       
-      // Return failure response (for synchronized actions, this marks it as failed)
-      res.status(200).json({
+      // Return failure response with proper HTTP error code
+      // Port will mark the action as failed based on the HTTP status
+      res.status(400).json({
         status: 'FAILURE',
         message: error.message || 'Action failed',
         runId: runId,
@@ -110,8 +127,8 @@ app.post(process.env.WEBHOOK_PATH || '/webhook', async (req, res) => {
 
   } catch (error) {
     logger.error('Webhook endpoint error:', error);
-    // Return failure response for synchronized actions
-    res.status(200).json({
+    // Return failure response with proper HTTP error code
+    res.status(500).json({
       status: 'FAILURE',
       message: error.message || 'Error processing action',
       error: error.message,
@@ -428,6 +445,8 @@ async function handleAWSSecrets(runId, action, properties, entity) {
           region: secretsService.config.region,
           operation: operation,
           last_updated: new Date().toISOString(),
+          status: 'success',
+          error_message: null,
         },
       };
 
@@ -445,6 +464,41 @@ async function handleAWSSecrets(runId, action, properties, entity) {
       () => portClient.addActionRunLog(runId, `Operation failed: ${error.message}`),
       'Could not add error log'
     );
+
+    // Create failed entity to track history of failed operations
+    const shouldCreateEntity = properties.createEntity !== undefined 
+      ? properties.createEntity 
+      : process.env.PORT_CREATE_ENTITY === 'true';
+    
+    if (shouldCreateEntity) {
+      const blueprintId = properties.blueprintId || process.env.PORT_BLUEPRINT_ID;
+      if (blueprintId) {
+        const secretName = properties.secretName || properties.secret_name || properties.secret_key;
+        const failedEntityData = {
+          identifier: `${secretName.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase()}-failed-${Date.now()}`,
+          title: `[FAILED] ${secretName}`,
+          properties: {
+            secret_name: secretName,
+            secret_arn: null,
+            secret_version: null,
+            region: properties.region || process.env.AWS_REGION || 'us-east-1',
+            operation: properties.operation || 'upsert',
+            last_updated: new Date().toISOString(),
+            status: 'failed',
+            error_message: error.message,
+          },
+        };
+
+        await safePortCall(
+          async () => {
+            await portClient.upsertEntity(blueprintId, failedEntityData, runId);
+            await portClient.addActionRunLog(runId, `Failed operation recorded in Port blueprint: ${blueprintId}`);
+          },
+          'Could not create failed entity'
+        );
+      }
+    }
+
     throw error;
   }
 }
